@@ -5,6 +5,7 @@ import com.amazonaws.AmazonServiceException;
 import com.amazonaws.services.dynamodbv2.document.DynamoDB;
 import com.amazonaws.services.dynamodbv2.document.Item;
 import com.amazonaws.services.dynamodbv2.document.TableWriteItems;
+import com.amazonaws.util.json.Jackson;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 import com.google.common.base.Optional;
@@ -34,6 +35,7 @@ import org.msgpack.value.Value;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -271,7 +273,21 @@ public class DynamodbOutputPlugin
                                 addNullValue(column.getName());
                             }
                             else {
-                                item.withString(column.getName(), pageReader.getString(column));
+                                Map parsedJson = null;
+                                try {
+                                    parsedJson = Jackson.fromJsonString(pageReader.getString(column), Map.class);
+                                }
+                                catch (AmazonClientException e) {
+                                    item.withString(column.getName(), pageReader.getString(column));
+                                    return;
+                                }
+
+                                if (parsedJson.get("SS") instanceof List) {
+                                    item.withStringSet(column.getName(), new HashSet<String>((List) parsedJson.get("SS")));
+                                }
+                                else if (parsedJson.get("NS") instanceof List) {
+                                    item.withNumberSet(column.getName(), new HashSet<Number>((List) parsedJson.get("NS")));
+                                }
                             }
                         }
 
