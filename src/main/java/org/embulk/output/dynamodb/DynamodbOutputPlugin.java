@@ -5,7 +5,6 @@ import com.amazonaws.AmazonServiceException;
 import com.amazonaws.services.dynamodbv2.document.DynamoDB;
 import com.amazonaws.services.dynamodbv2.document.Item;
 import com.amazonaws.services.dynamodbv2.document.TableWriteItems;
-import com.amazonaws.util.json.Jackson;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 import com.google.common.base.Optional;
@@ -109,6 +108,10 @@ public class DynamodbOutputPlugin
         @Config("sort_key_type")
         @ConfigDefault("null")
         Optional<String> getSortKeyType();
+
+        @Config("enable_json_data_type_descriptors")
+        @ConfigDefault("false")
+        Boolean getEnableJsonDataTypeDescriptors();
     }
 
     private final Logger log;
@@ -203,6 +206,7 @@ public class DynamodbOutputPlugin
         private final Optional<String> updateExpression;
         private final List primaryKeyElements;
         private final int maxPutItems;
+        private final Boolean enableJsonDataTypeDescriptors;
 
         public DynamodbPageOutput(PluginTask task, DynamoDB dynamoDB)
         {
@@ -214,6 +218,7 @@ public class DynamodbOutputPlugin
             this.updateExpression = task.getUpdateExpression();
             this.primaryKeyElements = (mode.equals(Mode.UPSERT_WITH_EXPRESSION)) ? dynamodbUtils.getPrimaryKey(dynamoDB, table) : null;
             this.maxPutItems = task.getMaxPutItems();
+            this.enableJsonDataTypeDescriptors = task.getEnableJsonDataTypeDescriptors();
         }
 
         void open(final Schema schema)
@@ -273,19 +278,7 @@ public class DynamodbOutputPlugin
                                 addNullValue(column.getName());
                             }
                             else {
-                                Map parsedJson = null;
-                                try {
-                                    parsedJson = Jackson.fromJsonString(pageReader.getString(column), Map.class);
-                                } catch (AmazonClientException e) {
-                                    item.withString(column.getName(), pageReader.getString(column));
-                                    return;
-                                }
-
-                                if (parsedJson.get("SS") instanceof List) {
-                                    item.withStringSet(column.getName(), new HashSet<String>((List) parsedJson.get("SS")));
-                                } else if (parsedJson.get("NS") instanceof List) {
-                                    item.withNumberSet(column.getName(), new HashSet<Number>((List) parsedJson.get("NS")));
-                                }
+                                item.withString(column.getName(), pageReader.getString(column));
                             }
                         }
 
@@ -314,6 +307,18 @@ public class DynamodbOutputPlugin
                                         list.add(getRawFromValue(v));
                                     }
                                     item.withList(column.getName(), list);
+                                }
+                                else if (enableJsonDataTypeDescriptors && jsonValue.isMapValue()) {
+                                    Map m = (Map) getRawFromValue(jsonValue.asMapValue());
+                                    if (m.get("SS") instanceof List) {
+                                        item.withStringSet(column.getName(), new HashSet<String>((List) m.get("SS")));
+                                    }
+                                    else if (m.get("NS") instanceof List) {
+                                        item.withNumberSet(column.getName(), new HashSet<Number>((List) m.get("NS")));
+                                    }
+                                    else {
+                                        item.withJSON(column.getName(), jsonValue.toJson());
+                                    }
                                 }
                                 else {
                                     item.withJSON(column.getName(), jsonValue.toJson());
